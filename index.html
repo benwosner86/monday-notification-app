@@ -1,0 +1,178 @@
+<!DOCTYPE html>
+<html>
+<head>
+  <meta charset="utf-8">
+  <title>Send Notification</title>
+  <script src="https://cdn.jsdelivr.net/npm/monday-sdk-js/dist/main.js"></script>
+  <style>
+    body { font-family: Roboto, Arial, sans-serif; padding: 20px; background-color: #f6f7fb; color: #323338; }
+    .card { background: #ffffff; border: 1px solid #d0d4e4; border-radius: 8px; padding: 24px; max-width: 500px; margin: 0 auto; box-shadow: 0 4px 12px rgba(0,0,0,0.05); }
+    h2 { margin-top: 0; font-size: 20px; color: #323338; }
+    .status-badge { font-size: 13px; font-weight: 600; margin-bottom: 20px; color: #0073ea; padding: 8px 12px; background: #e5f4ff; border-radius: 4px; display: inline-block; }
+    .sender-card { display: flex; align-items: center; gap: 12px; background: #f0f4f9; padding: 10px 14px; border-radius: 6px; margin-bottom: 18px; border: 1px solid #dce4ec; }
+    .sender-avatar { width: 36px; height: 36px; border-radius: 50%; background: #0073ea; color: white; display: flex; align-items: center; justify-content: center; font-weight: bold; font-size: 14px; }
+    .sender-info { text-align: left; }
+    .sender-label { font-size: 11px; color: #676879; text-transform: uppercase; font-weight: bold; }
+    .sender-name { font-size: 14px; font-weight: 600; color: #323338; }
+    .form-group { margin-bottom: 18px; text-align: left; }
+    label { font-weight: 600; font-size: 13px; display: block; margin-bottom: 6px; }
+    select, textarea { width: 100%; padding: 10px; border: 1px solid #c3c6d4; border-radius: 4px; font-size: 14px; box-sizing: border-box; }
+    select:focus, textarea:focus { border-color: #0073ea; outline: none; }
+    button { background-color: #0073ea; color: white; border: none; padding: 12px 20px; border-radius: 4px; font-size: 14px; font-weight: 600; cursor: pointer; width: 100%; transition: background 0.2s; }
+    button:hover { background-color: #0060b9; }
+    button:disabled { background-color: #c3c6d4; cursor: not-allowed; }
+    .alert { margin-top: 15px; padding: 10px; border-radius: 4px; font-size: 13px; display: none; text-align: left; }
+    .alert-success { background: #e6f4ea; color: #137333; border: 1px solid #ceead6; }
+    .alert-error { background: #fce8e6; color: #c5221f; border: 1px solid #fad2cf; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h2>🔔 Send Board Notification</h2>
+    <div id="status" class="status-badge">Connecting to Monday...</div>
+
+    <div id="senderCard" class="sender-card" style="display: none;">
+      <div id="senderAvatar" class="sender-avatar">?</div>
+      <div class="sender-info">
+        <div class="sender-label">Sending As</div>
+        <div id="senderName" class="sender-name">Loading user...</div>
+      </div>
+    </div>
+
+    <div id="appForm">
+      <div class="form-group">
+        <label for="recipientSelect">Select Recipient</label>
+        <select id="recipientSelect" disabled>
+          <option value="">Loading users...</option>
+        </select>
+      </div>
+
+      <div class="form-group">
+        <label for="messageInput">Notification Message</label>
+        <textarea id="messageInput" rows="4" placeholder="Type your notification message here..."></textarea>
+      </div>
+
+      <button id="sendBtn" onclick="sendNotification()" disabled>Send Notification</button>
+    </div>
+
+    <div id="alertBox" class="alert"></div>
+  </div>
+
+  <script>
+    const monday = window.mondaySdk();
+    let currentBoardId = "";
+    let currentUser = null;
+    let allUsers = [];
+
+    window.addEventListener("DOMContentLoaded", () => {
+      monday.listen("context", res => {
+        if (res && res.data) {
+          currentBoardId = res.data.boardId || res.data.boardIds?.[0];
+        }
+      });
+
+      initDynamicUser();
+    });
+
+    function initDynamicUser() {
+      monday.api(`query { me { id name email } }`).then(res => {
+        if (res.data && res.data.me) {
+          currentUser = res.data.me;
+          
+          document.getElementById("status").innerText = "✓ Connected";
+          document.getElementById("senderName").innerText = currentUser.name;
+          document.getElementById("senderAvatar").innerText = currentUser.name.charAt(0).toUpperCase();
+          document.getElementById("senderCard").style.display = "flex";
+
+          loadRecipients();
+        } else {
+          document.getElementById("status").innerText = "⚠ Identity Error";
+          showAlert("Could not resolve current user context.", "error");
+        }
+      }).catch(err => {
+        document.getElementById("status").innerText = "SDK Error";
+        showAlert("Monday SDK Error: " + err.message, "error");
+      });
+    }
+
+    function loadRecipients() {
+      monday.api(`query { users (kind: non_pending) { id name } }`).then(res => {
+        if (res.data && res.data.users) {
+          allUsers = res.data.users;
+          const select = document.getElementById("recipientSelect");
+          select.innerHTML = '<option value="">-- Choose User --</option>';
+          select.innerHTML += '<option value="ALL">📢 Select All (Broadcast to Everyone)</option>';
+          
+          allUsers.forEach(u => {
+            select.innerHTML += `<option value="${u.id}">${u.name}</option>`;
+          });
+          select.disabled = false;
+          document.getElementById("sendBtn").disabled = false;
+        } else {
+          showAlert("Failed to load recipient list.", "error");
+        }
+      }).catch(err => {
+        showAlert("Error loading recipients: " + err.message, "error");
+      });
+    }
+
+    async function sendNotification() {
+      const recipientId = document.getElementById("recipientSelect").value;
+      const message = document.getElementById("messageInput").value.trim();
+
+      if (!recipientId) return showAlert("Please select a recipient.", "error");
+      if (!message) return showAlert("Please enter a message.", "error");
+
+      const sendBtn = document.getElementById("sendBtn");
+      sendBtn.disabled = true;
+
+      const targetBoard = currentBoardId || currentUser.id;
+
+      try {
+        if (recipientId === 'ALL') {
+          for (let u of allUsers) {
+            await createNotificationMutation(message, u.id, targetBoard);
+          }
+        } else {
+          await createNotificationMutation(message, recipientId, targetBoard);
+        }
+
+        sendBtn.disabled = false;
+        showAlert("✓ Notification sent successfully as " + currentUser.name + "!", "success");
+        document.getElementById("messageInput").value = "";
+        document.getElementById("recipientSelect").value = "";
+      } catch (err) {
+        sendBtn.disabled = false;
+        showAlert("Failed to send: " + err.message, "error");
+      }
+    }
+
+    function createNotificationMutation(text, targetUserId, boardId) {
+      const query = `
+        mutation ($text: String!, $targetUserId: ID!, $targetId: ID!) {
+          create_notification (
+            text: $text,
+            user_id: $targetUserId,
+            target_id: $targetId,
+            target_type: Project
+          ) { id }
+        }
+      `;
+      const variables = {
+        text: text,
+        targetUserId: String(targetUserId),
+        targetId: String(boardId)
+      };
+
+      return monday.api(query, { variables: variables });
+    }
+
+    function showAlert(text, type) {
+      const box = document.getElementById("alertBox");
+      box.className = "alert alert-" + type;
+      box.innerText = text;
+      box.style.display = "block";
+    }
+  </script>
+</body>
+</html>
